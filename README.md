@@ -20,6 +20,7 @@ The system retrieves relevant evidence from scientific text and code, then uses 
 - Paper and code comparison
 - Evaluation of retrieval and generated answers
 - Interactive Gradio interface
+The project is currently under development.
 
 ## Planned Pipeline
 
@@ -46,3 +47,15 @@ Scientific Text + Source Code
               |
               v
    Answer + Evidence + Sources
+
+##Technologies
+Python
+PyTorch
+Hugging Face Transformers
+Sentence Transformers
+FAISS
+PEFT
+QLoRA
+Gradio
+
+##Author: zohreh zakeran
