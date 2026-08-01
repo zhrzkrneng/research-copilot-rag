@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -26,18 +27,7 @@ class SentenceTransformerEmbedder(BaseEmbedder):
             "Represent this sentence for searching relevant passages: "
         ),
     ) -> None:
-        """Initialize the embedding model.
-
-        Args:
-            model_name: Hugging Face model identifier.
-            device: Torch device such as ``cpu`` or ``cuda``.
-            batch_size: Encoding batch size.
-            normalize_embeddings: Whether to L2-normalize vectors.
-            query_prefix: Prefix added to retrieval queries.
-
-        Raises:
-            ValueError: If batch size is invalid.
-        """
+        """Initialize the embedding model."""
         if batch_size <= 0:
             raise ValueError("batch_size must be greater than zero.")
 
@@ -51,7 +41,7 @@ class SentenceTransformerEmbedder(BaseEmbedder):
             device=device,
         )
 
-        model_dimension = self.model.get_sentence_embedding_dimension()
+        model_dimension = self._get_model_dimension()
 
         if model_dimension is None:
             raise RuntimeError(
@@ -69,22 +59,22 @@ class SentenceTransformerEmbedder(BaseEmbedder):
         self,
         chunks: list[Chunk],
     ) -> np.ndarray:
-        """Encode chunks into dense document vectors."""
+        """Encode document chunks into dense vectors."""
         if not chunks:
             return np.empty(
                 (0, self.dimension),
                 dtype=np.float32,
             )
 
-        texts = [chunk.text for chunk in chunks]
-
-        return self._encode_texts(texts)
+        return self._encode_texts(
+            [chunk.text for chunk in chunks]
+        )
 
     def encode_query(
         self,
         query: str,
     ) -> np.ndarray:
-        """Encode one retrieval query."""
+        """Encode a retrieval query."""
         cleaned_query = query.strip()
 
         if not cleaned_query:
@@ -92,16 +82,36 @@ class SentenceTransformerEmbedder(BaseEmbedder):
 
         query_text = f"{self.query_prefix}{cleaned_query}"
 
-        embeddings = self._encode_texts([query_text])
+        return self._encode_texts([query_text])[0]
 
-        return embeddings[0]
+    def _get_model_dimension(self) -> int | None:
+        """Read model dimension across old and new library APIs."""
+        new_api = getattr(
+            self.model,
+            "get_embedding_dimension",
+            None,
+        )
+
+        if callable(new_api):
+            return new_api()
+
+        legacy_api = getattr(
+            self.model,
+            "get_sentence_embedding_dimension",
+            None,
+        )
+
+        if callable(legacy_api):
+            return legacy_api()
+
+        return None
 
     def _encode_texts(
         self,
         texts: Sequence[str],
     ) -> np.ndarray:
-        """Encode text while enforcing a stable NumPy output."""
-        embeddings = self.model.encode(
+        """Encode texts into a stable float32 matrix."""
+        embeddings: Any = self.model.encode(
             list(texts),
             batch_size=self.batch_size,
             convert_to_numpy=True,
@@ -116,5 +126,20 @@ class SentenceTransformerEmbedder(BaseEmbedder):
 
         if array.ndim == 1:
             array = array.reshape(1, -1)
+
+        if array.ndim != 2:
+            raise RuntimeError(
+                "Expected a two-dimensional embedding matrix."
+            )
+
+        if array.shape[1] != self.dimension:
+            raise RuntimeError(
+                "Embedding dimension mismatch."
+            )
+
+        if not np.isfinite(array).all():
+            raise RuntimeError(
+                "Embeddings contain NaN or infinite values."
+            )
 
         return array
