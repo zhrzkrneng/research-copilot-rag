@@ -51,7 +51,11 @@ class SentenceTransformerEmbedder(BaseEmbedder):
             device=device,
         )
 
+        if hasattr(self.model, "get_embedding_dimension"):
+    
         model_dimension = self.model.get_embedding_dimension()
+            else:
+                 model_dimension = self.model.get_sentence_embedding_dimension()
 
         if model_dimension is None:
             raise RuntimeError(
