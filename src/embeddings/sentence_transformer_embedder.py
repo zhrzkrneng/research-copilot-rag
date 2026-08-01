@@ -37,6 +37,7 @@ class SentenceTransformerEmbedder(BaseEmbedder):
 
         Raises:
             ValueError: If batch size is invalid.
+            RuntimeError: If the model does not report its dimension.
         """
         if batch_size <= 0:
             raise ValueError("batch_size must be greater than zero.")
@@ -52,10 +53,11 @@ class SentenceTransformerEmbedder(BaseEmbedder):
         )
 
         if hasattr(self.model, "get_embedding_dimension"):
-    
-        model_dimension = self.model.get_embedding_dimension()
-            else:
-                 model_dimension = self.model.get_sentence_embedding_dimension()
+            model_dimension = self.model.get_embedding_dimension()
+        else:
+            model_dimension = (
+                self.model.get_sentence_embedding_dimension()
+            )
 
         if model_dimension is None:
             raise RuntimeError(
@@ -95,7 +97,6 @@ class SentenceTransformerEmbedder(BaseEmbedder):
             raise ValueError("query cannot be empty.")
 
         query_text = f"{self.query_prefix}{cleaned_query}"
-
         embeddings = self._encode_texts([query_text])
 
         return embeddings[0]
