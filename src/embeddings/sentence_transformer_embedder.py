@@ -1,10 +1,4 @@
-from pathlib import Path
-
-PROJECT_ROOT = Path(
-    "/content/drive/MyDrive/AI_Projects/research-copilot-rag"
-)
-
-file_code = r'''"""Sentence Transformers embedding implementation."""
+"""Sentence Transformers embedding implementation."""
 
 from __future__ import annotations
 
@@ -33,7 +27,19 @@ class SentenceTransformerEmbedder(BaseEmbedder):
             "Represent this sentence for searching relevant passages: "
         ),
     ) -> None:
-        """Initialize the embedding model."""
+        """Initialize the embedding model.
+
+        Args:
+            model_name: Hugging Face model identifier.
+            device: Torch device such as ``cpu`` or ``cuda``.
+            batch_size: Number of texts encoded in each batch.
+            normalize_embeddings: Whether to L2-normalize output vectors.
+            query_prefix: Prefix added before retrieval queries.
+
+        Raises:
+            ValueError: If ``batch_size`` is not positive.
+            RuntimeError: If the model does not report its embedding dimension.
+        """
         if batch_size <= 0:
             raise ValueError("batch_size must be greater than zero.")
 
@@ -65,7 +71,15 @@ class SentenceTransformerEmbedder(BaseEmbedder):
         self,
         chunks: list[Chunk],
     ) -> np.ndarray:
-        """Encode document chunks into dense vectors."""
+        """Encode document chunks into dense vectors.
+
+        Args:
+            chunks: Ordered chunks to encode.
+
+        Returns:
+            Float32 array with shape
+            ``(number_of_chunks, embedding_dimension)``.
+        """
         if not chunks:
             return np.empty(
                 (0, self.dimension),
@@ -73,13 +87,24 @@ class SentenceTransformerEmbedder(BaseEmbedder):
             )
 
         texts = [chunk.text for chunk in chunks]
+
         return self._encode_texts(texts)
 
     def encode_query(
         self,
         query: str,
     ) -> np.ndarray:
-        """Encode a retrieval query into one dense vector."""
+        """Encode a retrieval query into one dense vector.
+
+        Args:
+            query: User query text.
+
+        Returns:
+            Float32 vector with shape ``(embedding_dimension,)``.
+
+        Raises:
+            ValueError: If the query is empty or only whitespace.
+        """
         cleaned_query = query.strip()
 
         if not cleaned_query:
@@ -91,7 +116,12 @@ class SentenceTransformerEmbedder(BaseEmbedder):
         return embeddings[0]
 
     def _get_model_dimension(self) -> int | None:
-        """Return dimension across old and new library APIs."""
+        """Return embedding dimension across library API versions.
+
+        Newer Sentence Transformers versions expose
+        ``get_embedding_dimension`` while older versions and some test doubles
+        expose ``get_sentence_embedding_dimension``.
+        """
         new_api = getattr(
             self.model,
             "get_embedding_dimension",
@@ -116,7 +146,7 @@ class SentenceTransformerEmbedder(BaseEmbedder):
         self,
         texts: Sequence[str],
     ) -> np.ndarray:
-        """Encode texts as a stable two-dimensional NumPy array."""
+        """Encode texts and return a stable two-dimensional NumPy array."""
         embeddings: Any = self.model.encode(
             list(texts),
             batch_size=self.batch_size,
@@ -145,18 +175,3 @@ class SentenceTransformerEmbedder(BaseEmbedder):
             )
 
         return array
-'''
-
-path = (
-    PROJECT_ROOT
-    / "src"
-    / "embeddings"
-    / "sentence_transformer_embedder.py"
-)
-
-path.write_text(
-    file_code,
-    encoding="utf-8",
-)
-
-print(f"Rewritten: {path}")
