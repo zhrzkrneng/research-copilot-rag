@@ -19,7 +19,7 @@ class DenseRetriever(BaseRetriever):
         embedder: BaseEmbedder,
         vector_store: BaseVectorStore,
     ) -> None:
-        """Initialize the retriever."""
+        """Initialize the dense retriever."""
         self.embedder = embedder
         self.vector_store = vector_store
 
@@ -29,9 +29,14 @@ class DenseRetriever(BaseRetriever):
     ) -> None:
         """Build a fresh vector index from document chunks."""
         if not isinstance(chunks, list):
-            raise TypeError("chunks must be provided as a list.")
+            raise TypeError(
+                "chunks must be provided as a list."
+            )
 
-        if not all(isinstance(chunk, Chunk) for chunk in chunks):
+        if not all(
+            isinstance(chunk, Chunk)
+            for chunk in chunks
+        ):
             raise TypeError(
                 "all items in chunks must be Chunk instances."
             )
@@ -53,8 +58,8 @@ class DenseRetriever(BaseRetriever):
 
         if embeddings.shape[0] != len(chunks):
             raise RuntimeError(
-                "The embedder returned a different number of vectors "
-                "than input chunks."
+                "The embedder returned a different number "
+                "of vectors than input chunks."
             )
 
         if embeddings.shape[1] != self.embedder.dimension:
@@ -78,8 +83,62 @@ class DenseRetriever(BaseRetriever):
         query: str,
         top_k: int = 5,
     ) -> list[RetrievalResult]:
-        """Retrieve relevant chunks for a query.
+        """Retrieve the most relevant chunks for a query."""
+        if not isinstance(query, str):
+            raise TypeError(
+                "query must be a string."
+            )
 
-        This method will be implemented in Sprint 8.3.
-        """
-        raise NotImplementedError
+        cleaned_query = query.strip()
+
+        if not cleaned_query:
+            raise ValueError(
+                "query cannot be empty."
+            )
+
+        if (
+            not isinstance(top_k, int)
+            or isinstance(top_k, bool)
+        ):
+            raise TypeError(
+                "top_k must be an integer."
+            )
+
+        if top_k <= 0:
+            raise ValueError(
+                "top_k must be greater than zero."
+            )
+
+        query_embedding = np.asarray(
+            self.embedder.encode_query(
+                cleaned_query
+            ),
+            dtype=np.float32,
+        )
+
+        if query_embedding.ndim != 1:
+            raise RuntimeError(
+                "The embedder must return a one-dimensional "
+                "query vector."
+            )
+
+        if (
+            query_embedding.shape[0]
+            != self.embedder.dimension
+        ):
+            raise RuntimeError(
+                "The query embedding dimension does not match "
+                "the embedder dimension."
+            )
+
+        if not np.isfinite(
+            query_embedding
+        ).all():
+            raise RuntimeError(
+                "The embedder returned NaN or infinite values."
+            )
+
+        return self.vector_store.search(
+            query_embedding=query_embedding,
+            top_k=top_k,
+        )
