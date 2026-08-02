@@ -27,19 +27,7 @@ class SentenceTransformerEmbedder(BaseEmbedder):
             "Represent this sentence for searching relevant passages: "
         ),
     ) -> None:
-        """Initialize the embedding model.
-
-        Args:
-            model_name: Hugging Face model identifier.
-            device: Torch device such as ``cpu`` or ``cuda``.
-            batch_size: Number of texts encoded in each batch.
-            normalize_embeddings: Whether to L2-normalize output vectors.
-            query_prefix: Prefix added before retrieval queries.
-
-        Raises:
-            ValueError: If ``batch_size`` is not positive.
-            RuntimeError: If the model does not report its embedding dimension.
-        """
+        """Initialize the embedding model."""
         if batch_size <= 0:
             raise ValueError("batch_size must be greater than zero.")
 
@@ -64,22 +52,14 @@ class SentenceTransformerEmbedder(BaseEmbedder):
 
     @property
     def dimension(self) -> int:
-        """Return the dimensionality of generated embeddings."""
+        """Return embedding dimensionality."""
         return self._dimension
 
     def encode_chunks(
         self,
         chunks: list[Chunk],
     ) -> np.ndarray:
-        """Encode document chunks into dense vectors.
-
-        Args:
-            chunks: Ordered chunks to encode.
-
-        Returns:
-            Float32 array with shape
-            ``(number_of_chunks, embedding_dimension)``.
-        """
+        """Encode document chunks."""
         if not chunks:
             return np.empty(
                 (0, self.dimension),
@@ -94,51 +74,38 @@ class SentenceTransformerEmbedder(BaseEmbedder):
         self,
         query: str,
     ) -> np.ndarray:
-        """Encode a retrieval query into one dense vector.
+        """Encode a retrieval query."""
+        query = query.strip()
 
-        Args:
-            query: User query text.
-
-        Returns:
-            Float32 vector with shape ``(embedding_dimension,)``.
-
-        Raises:
-            ValueError: If the query is empty or only whitespace.
-        """
-        cleaned_query = query.strip()
-
-        if not cleaned_query:
+        if not query:
             raise ValueError("query cannot be empty.")
 
-        query_text = f"{self.query_prefix}{cleaned_query}"
-        embeddings = self._encode_texts([query_text])
+        query = f"{self.query_prefix}{query}"
+
+        embeddings = self._encode_texts([query])
 
         return embeddings[0]
 
     def _get_model_dimension(self) -> int | None:
-        """Return embedding dimension across library API versions.
+        """Return embedding dimension across library versions."""
 
-        Newer Sentence Transformers versions expose
-        ``get_embedding_dimension`` while older versions and some test doubles
-        expose ``get_sentence_embedding_dimension``.
-        """
-        new_api = getattr(
+        method = getattr(
             self.model,
             "get_embedding_dimension",
             None,
         )
 
-        if callable(new_api):
-            return new_api()
+        if callable(method):
+            return method()
 
-        legacy_api = getattr(
+        method = getattr(
             self.model,
             "get_sentence_embedding_dimension",
             None,
         )
 
-        if callable(legacy_api):
-            return legacy_api()
+        if callable(method):
+            return method()
 
         return None
 
@@ -146,7 +113,8 @@ class SentenceTransformerEmbedder(BaseEmbedder):
         self,
         texts: Sequence[str],
     ) -> np.ndarray:
-        """Encode texts and return a stable two-dimensional NumPy array."""
+        """Encode text into float32 embeddings."""
+
         embeddings: Any = self.model.encode(
             list(texts),
             batch_size=self.batch_size,
@@ -155,23 +123,27 @@ class SentenceTransformerEmbedder(BaseEmbedder):
             show_progress_bar=False,
         )
 
-        array = np.asarray(
+        embeddings = np.asarray(
             embeddings,
             dtype=np.float32,
         )
 
-        if array.ndim == 1:
-            array = array.reshape(1, -1)
+        if embeddings.ndim == 1:
+            embeddings = embeddings.reshape(1, -1)
 
-        if array.ndim != 2:
+        if embeddings.ndim != 2:
             raise RuntimeError(
-                "The embedding model returned an invalid array shape."
+                "Expected a 2-D embedding matrix."
             )
 
-        if array.shape[1] != self.dimension:
+        if embeddings.shape[1] != self.dimension:
             raise RuntimeError(
-                "The returned embedding dimension does not match "
-                "the model dimension."
+                "Embedding dimension mismatch."
             )
 
-        return array
+        if not np.isfinite(embeddings).all():
+            raise RuntimeError(
+                "Embeddings contain NaN or Inf values."
+            )
+
+        return embeddings
