@@ -1,0 +1,17 @@
+pymupdf
+markdown-it-py
+nbformat
+sentence-transformers
+faiss-cpu
+transformers
+accelerate
+torch
+langchain
+langchain-community
+ragas
+bert-score
+gradio
+tqdm
+pandas
+numpy
+sentence-transformers>=3.0
