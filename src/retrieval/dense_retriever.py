@@ -12,7 +12,7 @@ from src.retrieval.result import RetrievalResult
 
 
 class DenseRetriever(BaseRetriever):
-    """Dense retriever built from an embedder and a vector store."""
+    """Retrieve relevant chunks using dense embeddings."""
 
     def __init__(
         self,
