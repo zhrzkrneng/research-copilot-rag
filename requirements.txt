@@ -14,3 +14,4 @@ gradio
 tqdm
 pandas
 numpy
+sentence-transformers>=3.0
