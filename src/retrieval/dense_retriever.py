@@ -12,7 +12,7 @@ from src.retrieval.result import RetrievalResult
 
 
 class DenseRetriever(BaseRetriever):
-    """Dense retriever built from an embedder and a vector store."""
+    """Retrieve relevant chunks using dense embeddings."""
 
     def __init__(
         self,
@@ -58,8 +58,8 @@ class DenseRetriever(BaseRetriever):
 
         if embeddings.shape[0] != len(chunks):
             raise RuntimeError(
-                "The embedder returned a different number "
-                "of vectors than input chunks."
+                "The embedder returned a different number of vectors "
+                "than input chunks."
             )
 
         if embeddings.shape[1] != self.embedder.dimension:
@@ -110,9 +110,7 @@ class DenseRetriever(BaseRetriever):
             )
 
         query_embedding = np.asarray(
-            self.embedder.encode_query(
-                cleaned_query
-            ),
+            self.embedder.encode_query(cleaned_query),
             dtype=np.float32,
         )
 
@@ -122,18 +120,13 @@ class DenseRetriever(BaseRetriever):
                 "query vector."
             )
 
-        if (
-            query_embedding.shape[0]
-            != self.embedder.dimension
-        ):
+        if query_embedding.shape[0] != self.embedder.dimension:
             raise RuntimeError(
                 "The query embedding dimension does not match "
                 "the embedder dimension."
             )
 
-        if not np.isfinite(
-            query_embedding
-        ).all():
+        if not np.isfinite(query_embedding).all():
             raise RuntimeError(
                 "The embedder returned NaN or infinite values."
             )
