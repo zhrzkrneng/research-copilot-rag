@@ -1,4 +1,4 @@
-"""Evaluation metrics."""
+"""Evaluation metrics and utilities."""
 
 from .base_metric import BaseMetric
 
