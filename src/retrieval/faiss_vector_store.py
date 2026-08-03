@@ -138,20 +138,10 @@ class FAISSVectorStore(BaseVectorStore):
         query_embedding: np.ndarray,
         top_k: int = 5,
     ) -> list[RetrievalResult]:
-        """Return the most similar stored chunks.
+        """Return the most similar stored chunks."""
+        if not isinstance(top_k, int) or isinstance(top_k, bool):
+            raise ValueError("top_k must be a positive integer.")
 
-        Args:
-            query_embedding: Query vector shaped ``(dimension,)`` or
-                ``(1, dimension)``.
-            top_k: Maximum number of results to return.
-
-        Returns:
-            Results ordered from highest to lowest cosine similarity.
-
-        Raises:
-            ValueError: If the query or ``top_k`` is invalid.
-            RuntimeError: If the index and chunk mapping are inconsistent.
-        """
         if top_k <= 0:
             raise ValueError("top_k must be greater than zero.")
 
@@ -160,7 +150,7 @@ class FAISSVectorStore(BaseVectorStore):
                 "FAISS index and chunk mapping are inconsistent."
             )
 
-        if len(self._chunks) == 0:
+        if not self._chunks:
             return []
 
         query = np.asarray(
@@ -215,10 +205,12 @@ class FAISSVectorStore(BaseVectorStore):
             scores[0],
             indices[0],
         ):
-            if index < 0:
+            row_index = int(index)
+
+            if row_index < 0:
                 continue
 
-            if index >= len(self._chunks):
+            if row_index >= len(self._chunks):
                 raise RuntimeError(
                     "FAISS returned an index outside "
                     "the chunk mapping."
@@ -226,7 +218,7 @@ class FAISSVectorStore(BaseVectorStore):
 
             results.append(
                 RetrievalResult(
-                    chunk=self._chunks[int(index)],
+                    chunk=self._chunks[row_index],
                     score=float(score),
                 )
             )
