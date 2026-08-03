@@ -12,14 +12,14 @@ from src.retrieval.result import RetrievalResult
 
 
 class DenseRetriever(BaseRetriever):
-    """Retrieve relevant chunks using dense embeddings."""
+    """Dense retriever built from an embedder and a vector store."""
 
     def __init__(
         self,
         embedder: BaseEmbedder,
         vector_store: BaseVectorStore,
     ) -> None:
-        """Initialize the dense retriever."""
+        """Initialize the retriever."""
         self.embedder = embedder
         self.vector_store = vector_store
 
@@ -29,14 +29,9 @@ class DenseRetriever(BaseRetriever):
     ) -> None:
         """Build a fresh vector index from document chunks."""
         if not isinstance(chunks, list):
-            raise TypeError(
-                "chunks must be provided as a list."
-            )
+            raise TypeError("chunks must be provided as a list.")
 
-        if not all(
-            isinstance(chunk, Chunk)
-            for chunk in chunks
-        ):
+        if not all(isinstance(chunk, Chunk) for chunk in chunks):
             raise TypeError(
                 "all items in chunks must be Chunk instances."
             )
@@ -85,29 +80,18 @@ class DenseRetriever(BaseRetriever):
     ) -> list[RetrievalResult]:
         """Retrieve the most relevant chunks for a query."""
         if not isinstance(query, str):
-            raise TypeError(
-                "query must be a string."
-            )
+            raise TypeError("query must be a string.")
 
         cleaned_query = query.strip()
 
         if not cleaned_query:
-            raise ValueError(
-                "query cannot be empty."
-            )
+            raise ValueError("query cannot be empty.")
 
-        if (
-            not isinstance(top_k, int)
-            or isinstance(top_k, bool)
-        ):
-            raise TypeError(
-                "top_k must be an integer."
-            )
+        if not isinstance(top_k, int) or isinstance(top_k, bool):
+            raise TypeError("top_k must be an integer.")
 
         if top_k <= 0:
-            raise ValueError(
-                "top_k must be greater than zero."
-            )
+            raise ValueError("top_k must be greater than zero.")
 
         query_embedding = np.asarray(
             self.embedder.encode_query(cleaned_query),
