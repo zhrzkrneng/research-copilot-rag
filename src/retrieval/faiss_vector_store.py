@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
 import faiss
 import numpy as np
@@ -15,15 +17,13 @@ from src.retrieval.result import RetrievalResult
 class FAISSVectorStore(BaseVectorStore):
     """Vector store backed by a normalized FAISS inner-product index."""
 
+    INDEX_FILENAME = "index.faiss"
+    CHUNKS_FILENAME = "chunks.json"
+    METADATA_FILENAME = "store.json"
+
     def __init__(self, dimension: int) -> None:
-        """Initialize an empty FAISS vector store.
-
-        Args:
-            dimension: Embedding-vector dimension.
-
-        Raises:
-            ValueError: If dimension is not positive.
-        """
+        if not isinstance(dimension, int) or isinstance(dimension, bool):
+            raise TypeError("dimension must be an integer.")
         if dimension <= 0:
             raise ValueError("dimension must be positive.")
 
@@ -32,11 +32,9 @@ class FAISSVectorStore(BaseVectorStore):
         self._chunks: list[Chunk] = []
 
     def __len__(self) -> int:
-        """Return the number of stored chunks."""
         return len(self._chunks)
 
     def clear(self) -> None:
-        """Remove all indexed vectors and chunks."""
         self.index.reset()
         self._chunks.clear()
 
@@ -45,30 +43,18 @@ class FAISSVectorStore(BaseVectorStore):
         chunks: list[Chunk],
         embeddings: np.ndarray,
     ) -> None:
-        """Add chunks and corresponding embeddings to the store.
+        if not isinstance(chunks, list):
+            raise TypeError("chunks must be a list.")
+        if not all(isinstance(chunk, Chunk) for chunk in chunks):
+            raise TypeError(
+                "all items in chunks must be Chunk instances."
+            )
 
-        Embeddings are converted to contiguous float32 arrays and
-        L2-normalized before being inserted into IndexFlatIP. Inner-product
-        search over normalized vectors is equivalent to cosine similarity.
-
-        Args:
-            chunks: Chunks corresponding to embedding rows.
-            embeddings: Matrix shaped ``(len(chunks), dimension)``.
-
-        Raises:
-            ValueError: If inputs are empty inconsistently, malformed,
-                non-finite, zero-length, or dimensionally incompatible.
-            RuntimeError: If the FAISS index and chunk mapping diverge.
-        """
-        array = np.asarray(
-            embeddings,
-            dtype=np.float32,
-        )
+        array = np.asarray(embeddings, dtype=np.float32)
 
         if not chunks:
             if array.size == 0:
                 return
-
             raise ValueError(
                 "embeddings must be empty when chunks are empty."
             )
@@ -77,28 +63,21 @@ class FAISSVectorStore(BaseVectorStore):
             raise ValueError(
                 "embeddings must be a two-dimensional array."
             )
-
         if array.shape[0] != len(chunks):
             raise ValueError(
                 "The number of chunks must match the number "
                 "of embedding rows."
             )
-
         if array.shape[1] != self.dimension:
             raise ValueError(
                 "Embedding dimension does not match the store dimension."
             )
-
         if not np.isfinite(array).all():
             raise ValueError(
                 "Embeddings contain NaN or infinite values."
             )
 
-        norms = np.linalg.norm(
-            array,
-            axis=1,
-        )
-
+        norms = np.linalg.norm(array, axis=1)
         if np.any(norms == 0):
             raise ValueError(
                 "Zero vectors cannot be added to the vector store."
@@ -108,55 +87,35 @@ class FAISSVectorStore(BaseVectorStore):
             array.copy(),
             dtype=np.float32,
         )
-
         faiss.normalize_L2(normalized)
 
         previous_total = self.index.ntotal
+        self.index.add(normalized)
+        self._chunks.extend(chunks)
 
-        try:
-            self.index.add(normalized)
-            self._chunks.extend(chunks)
-        except Exception:
-            # IndexFlatIP cannot remove only the latest batch reliably here,
-            # so fail before mutating whenever possible.
-            raise
-
-        expected_total = previous_total + len(chunks)
-
-        if self.index.ntotal != expected_total:
+        if self.index.ntotal != previous_total + len(chunks):
             raise RuntimeError(
                 "FAISS did not index the expected number of vectors."
             )
 
-        if self.index.ntotal != len(self._chunks):
-            raise RuntimeError(
-                "FAISS index and chunk mapping became inconsistent."
-            )
+        self._validate_consistency()
 
     def search(
         self,
         query_embedding: np.ndarray,
         top_k: int = 5,
     ) -> list[RetrievalResult]:
-        """Return the most similar stored chunks."""
         if not isinstance(top_k, int) or isinstance(top_k, bool):
             raise ValueError("top_k must be a positive integer.")
-
         if top_k <= 0:
             raise ValueError("top_k must be greater than zero.")
 
-        if self.index.ntotal != len(self._chunks):
-            raise RuntimeError(
-                "FAISS index and chunk mapping are inconsistent."
-            )
+        self._validate_consistency()
 
         if not self._chunks:
             return []
 
-        query = np.asarray(
-            query_embedding,
-            dtype=np.float32,
-        )
+        query = np.asarray(query_embedding, dtype=np.float32)
 
         if query.ndim == 1:
             query = query.reshape(1, -1)
@@ -171,12 +130,10 @@ class FAISSVectorStore(BaseVectorStore):
                 "Query embedding dimension does not match "
                 "the store dimension."
             )
-
         if not np.isfinite(query).all():
             raise ValueError(
                 "Query embedding contains NaN or infinite values."
             )
-
         if np.linalg.norm(query) == 0:
             raise ValueError(
                 "Query embedding cannot be a zero vector."
@@ -186,30 +143,20 @@ class FAISSVectorStore(BaseVectorStore):
             query.copy(),
             dtype=np.float32,
         )
-
         faiss.normalize_L2(normalized_query)
 
-        result_count = min(
-            top_k,
-            len(self._chunks),
-        )
-
+        count = min(top_k, len(self._chunks))
         scores, indices = self.index.search(
             normalized_query,
-            result_count,
+            count,
         )
 
         results: list[RetrievalResult] = []
 
-        for score, index in zip(
-            scores[0],
-            indices[0],
-        ):
+        for score, index in zip(scores[0], indices[0]):
             row_index = int(index)
-
             if row_index < 0:
                 continue
-
             if row_index >= len(self._chunks):
                 raise RuntimeError(
                     "FAISS returned an index outside "
@@ -226,9 +173,202 @@ class FAISSVectorStore(BaseVectorStore):
         return results
 
     def save(self, path: str | Path) -> None:
-        """Persist the index and chunk metadata."""
-        raise NotImplementedError
+        """Persist the FAISS index and chunks to a directory."""
+        directory = self._normalize_directory(path)
+        self._validate_consistency()
+        directory.mkdir(parents=True, exist_ok=True)
+
+        faiss.write_index(
+            self.index,
+            str(directory / self.INDEX_FILENAME),
+        )
+
+        chunks_payload = [
+            {
+                "text": chunk.text,
+                "chunk_id": chunk.chunk_id,
+                "source": chunk.source,
+                "metadata": chunk.metadata,
+            }
+            for chunk in self._chunks
+        ]
+
+        self._write_json(
+            directory / self.CHUNKS_FILENAME,
+            chunks_payload,
+        )
+        self._write_json(
+            directory / self.METADATA_FILENAME,
+            {
+                "dimension": self.dimension,
+                "count": len(self._chunks),
+                "index_type": "IndexFlatIP",
+            },
+        )
 
     def load(self, path: str | Path) -> None:
         """Load a previously persisted store."""
-        raise NotImplementedError
+        directory = self._normalize_directory(path)
+
+        if not directory.exists():
+            raise FileNotFoundError(directory)
+        if not directory.is_dir():
+            raise ValueError("path must point to a directory.")
+
+        index_path = directory / self.INDEX_FILENAME
+        chunks_path = directory / self.CHUNKS_FILENAME
+        metadata_path = directory / self.METADATA_FILENAME
+
+        for required_path in (
+            index_path,
+            chunks_path,
+            metadata_path,
+        ):
+            if not required_path.is_file():
+                raise FileNotFoundError(required_path)
+
+        metadata = self._read_json(metadata_path)
+
+        if not isinstance(metadata, dict):
+            raise ValueError(
+                "store metadata must be a JSON object."
+            )
+
+        stored_dimension = metadata.get("dimension")
+        stored_count = metadata.get("count")
+
+        if stored_dimension != self.dimension:
+            raise ValueError(
+                "Stored index dimension does not match "
+                "the current store dimension."
+            )
+        if (
+            not isinstance(stored_count, int)
+            or isinstance(stored_count, bool)
+            or stored_count < 0
+        ):
+            raise ValueError("stored count is invalid.")
+
+        loaded_index = faiss.read_index(str(index_path))
+
+        if loaded_index.d != self.dimension:
+            raise ValueError(
+                "Loaded FAISS index dimension is invalid."
+            )
+
+        chunks_payload = self._read_json(chunks_path)
+
+        if not isinstance(chunks_payload, list):
+            raise ValueError(
+                "stored chunks must be a JSON array."
+            )
+
+        loaded_chunks = [
+            self._chunk_from_mapping(item)
+            for item in chunks_payload
+        ]
+
+        if len(loaded_chunks) != stored_count:
+            raise ValueError(
+                "Stored chunk count does not match metadata."
+            )
+        if loaded_index.ntotal != stored_count:
+            raise ValueError(
+                "Stored FAISS vector count does not match metadata."
+            )
+
+        self.index = loaded_index
+        self._chunks = loaded_chunks
+        self._validate_consistency()
+
+    def _validate_consistency(self) -> None:
+        if self.index.ntotal != len(self._chunks):
+            raise RuntimeError(
+                "FAISS index and chunk mapping are inconsistent."
+            )
+
+    @staticmethod
+    def _normalize_directory(path: str | Path) -> Path:
+        if not isinstance(path, (str, Path)):
+            raise TypeError(
+                "path must be a string or pathlib.Path."
+            )
+        return Path(path).expanduser()
+
+    @staticmethod
+    def _write_json(path: Path, payload: Any) -> None:
+        try:
+            serialized = json.dumps(
+                payload,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "Chunk metadata must be JSON serializable."
+            ) from exc
+
+        path.write_text(serialized, encoding="utf-8")
+
+    @staticmethod
+    def _read_json(path: Path) -> Any:
+        try:
+            return json.loads(
+                path.read_text(encoding="utf-8")
+            )
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Invalid JSON file: {path.name}."
+            ) from exc
+
+    @staticmethod
+    def _chunk_from_mapping(data: Any) -> Chunk:
+        if not isinstance(data, dict):
+            raise ValueError(
+                "Each stored chunk must be a JSON object."
+            )
+
+        required = {
+            "text",
+            "chunk_id",
+            "source",
+            "metadata",
+        }
+
+        if set(data) != required:
+            raise ValueError(
+                "Stored chunk fields are invalid."
+            )
+
+        text = data["text"]
+        chunk_id = data["chunk_id"]
+        source = data["source"]
+        metadata = data["metadata"]
+
+        if not isinstance(text, str):
+            raise ValueError(
+                "Stored chunk text must be a string."
+            )
+        if (
+            not isinstance(chunk_id, int)
+            or isinstance(chunk_id, bool)
+        ):
+            raise ValueError(
+                "Stored chunk_id must be an integer."
+            )
+        if not isinstance(source, str):
+            raise ValueError(
+                "Stored chunk source must be a string."
+            )
+        if not isinstance(metadata, dict):
+            raise ValueError(
+                "Stored chunk metadata must be an object."
+            )
+
+        return Chunk(
+            text=text,
+            chunk_id=chunk_id,
+            source=source,
+            metadata=metadata,
+        )
