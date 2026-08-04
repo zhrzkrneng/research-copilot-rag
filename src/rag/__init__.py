@@ -1,4 +1,4 @@
-"""Retrieval-augmented generation orchestration."""
+"""Retrieval-augmented generation pipeline exports."""
 
 from .rag_pipeline import RAGPipeline, RAGResponse
 
