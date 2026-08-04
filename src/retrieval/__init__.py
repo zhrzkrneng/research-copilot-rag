@@ -1,7 +1,15 @@
-from src.retrieval.result import RetrievalResult
-from src.retrieval.base_vector_store import BaseVectorStore
+"""Retrieval components."""
+
+from .base_retriever import BaseRetriever
+from .base_vector_store import BaseVectorStore
+from .dense_retriever import DenseRetriever
+from .faiss_vector_store import FAISSVectorStore
+from .result import RetrievalResult
 
 __all__ = [
-    "RetrievalResult",
+    "BaseRetriever",
     "BaseVectorStore",
+    "DenseRetriever",
+    "FAISSVectorStore",
+    "RetrievalResult",
 ]
