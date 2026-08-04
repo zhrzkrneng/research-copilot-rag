@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import torch
@@ -11,12 +12,7 @@ from src.generation.base_generator import BaseGenerator
 
 
 class HFGenerator(BaseGenerator):
-    """Generate text with a Hugging Face causal language model.
-
-    The class is intentionally dependency-injection friendly: callers may
-    provide preloaded tokenizer and model objects, which keeps unit tests fast
-    and avoids downloading model weights during testing.
-    """
+    """Generate text with a Hugging Face causal language model."""
 
     DEFAULT_MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
 
@@ -30,21 +26,6 @@ class HFGenerator(BaseGenerator):
         tokenizer: Any | None = None,
         model: Any | None = None,
     ) -> None:
-        """Initialize the generator.
-
-        Args:
-            model_name: Hugging Face model identifier.
-            device: ``"auto"``, ``"cpu"``, ``"cuda"``, or a torch device
-                string such as ``"cuda:0"``.
-            torch_dtype: Dtype forwarded to Hugging Face model loading.
-            trust_remote_code: Whether Hugging Face remote model code may run.
-            tokenizer: Optional preloaded tokenizer.
-            model: Optional preloaded causal language model.
-
-        Raises:
-            TypeError: If arguments have invalid types.
-            ValueError: If strings are empty or device is unsupported.
-        """
         if not isinstance(model_name, str):
             raise TypeError("model_name must be a string.")
 
@@ -68,7 +49,6 @@ class HFGenerator(BaseGenerator):
         self.requested_device = cleaned_device
         self.torch_dtype = torch_dtype
         self.trust_remote_code = trust_remote_code
-
         self.device = self._resolve_device(cleaned_device)
 
         self.tokenizer = tokenizer or AutoTokenizer.from_pretrained(
@@ -92,7 +72,6 @@ class HFGenerator(BaseGenerator):
 
     @property
     def model_name(self) -> str:
-        """Return the configured Hugging Face model identifier."""
         return self._model_name
 
     def generate(
@@ -102,33 +81,23 @@ class HFGenerator(BaseGenerator):
         max_new_tokens: int = 512,
         temperature: float = 0.0,
     ) -> str:
-        """Generate a response from a fully formatted prompt.
-
-        Args:
-            prompt: Prompt passed to the model.
-            max_new_tokens: Maximum number of newly generated tokens.
-            temperature: Sampling temperature. Zero enables greedy decoding.
-
-        Returns:
-            Generated continuation with the input prompt removed.
-
-        Raises:
-            TypeError: If arguments have invalid types.
-            ValueError: If prompt or generation parameters are invalid.
-            RuntimeError: If tokenizer/model outputs are malformed.
-        """
+        """Generate a response from a grounded RAG prompt."""
         cleaned_prompt = self._validate_generation_inputs(
             prompt=prompt,
             max_new_tokens=max_new_tokens,
             temperature=temperature,
         )
 
+        model_prompt = self._format_for_instruct_model(
+            cleaned_prompt
+        )
+
         encoded = self.tokenizer(
-            cleaned_prompt,
+            model_prompt,
             return_tensors="pt",
         )
 
-        if not isinstance(encoded, dict):
+        if not isinstance(encoded, Mapping):
             raise RuntimeError(
                 "Tokenizer must return a mapping of model inputs."
             )
@@ -160,9 +129,13 @@ class HFGenerator(BaseGenerator):
         }
 
         if do_sample:
-            generation_kwargs["temperature"] = temperature
+            generation_kwargs["temperature"] = float(temperature)
 
-        eos_token_id = getattr(self.tokenizer, "eos_token_id", None)
+        eos_token_id = getattr(
+            self.tokenizer,
+            "eos_token_id",
+            None,
+        )
 
         if eos_token_id is not None:
             generation_kwargs["eos_token_id"] = eos_token_id
@@ -190,12 +163,66 @@ class HFGenerator(BaseGenerator):
                 "Tokenizer batch_decode() returned no generated text."
             )
 
-        answer = decoded[0].strip()
+        return self._clean_answer(decoded[0])
+
+    def _format_for_instruct_model(
+        self,
+        prompt: str,
+    ) -> str:
+        """Apply a tokenizer chat template when one is available."""
+        apply_chat_template = getattr(
+            self.tokenizer,
+            "apply_chat_template",
+            None,
+        )
+
+        if not callable(apply_chat_template):
+            return prompt
+
+        try:
+            formatted = apply_chat_template(
+                [
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    }
+                ],
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        except (TypeError, ValueError, RuntimeError):
+            return prompt
+
+        if not isinstance(formatted, str) or not formatted.strip():
+            return prompt
+
+        return formatted
+
+    @staticmethod
+    def _clean_answer(text: str) -> str:
+        """Remove common accidental conversation continuations."""
+        answer = text.strip()
+
+        stop_markers = (
+            "\nHuman:",
+            "\nUser:",
+            "\n### Human:",
+            "\n### User:",
+            "\n<|im_start|>user",
+        )
+
+        cut_positions = [
+            answer.find(marker)
+            for marker in stop_markers
+            if answer.find(marker) >= 0
+        ]
+
+        if cut_positions:
+            answer = answer[:min(cut_positions)].rstrip()
 
         return answer
 
     def _resolve_device(self, requested_device: str) -> torch.device:
-        """Resolve a user device string to a torch device."""
         if requested_device == "auto":
             requested_device = (
                 "cuda"
@@ -218,7 +245,6 @@ class HFGenerator(BaseGenerator):
         return resolved
 
     def _ensure_padding_token(self) -> None:
-        """Ensure generation has a valid padding token."""
         pad_token_id = getattr(
             self.tokenizer,
             "pad_token_id",
@@ -243,7 +269,6 @@ class HFGenerator(BaseGenerator):
         self.tokenizer.pad_token_id = eos_token_id
 
     def _move_to_device(self, value: Any) -> Any:
-        """Move tensor-like input to the configured device when possible."""
         if hasattr(value, "to"):
             return value.to(self.device)
 
@@ -256,7 +281,6 @@ class HFGenerator(BaseGenerator):
         max_new_tokens: int,
         temperature: float,
     ) -> str:
-        """Validate generation inputs and return a stripped prompt."""
         if not isinstance(prompt, str):
             raise TypeError("prompt must be a string.")
 
