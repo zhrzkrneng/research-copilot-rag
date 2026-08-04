@@ -1,0 +1,7 @@
+Retrieval-augmented generation, commonly called RAG, combines information retrieval with language-model generation.
+
+A RAG system first splits source documents into smaller chunks. It converts those chunks into vector embeddings and stores them in a vector index. When a user asks a question, the system embeds the query, retrieves the most relevant chunks, and places them inside the generation prompt.
+
+This process can improve factual grounding because the language model receives relevant source material at inference time. It also makes the answer easier to inspect because the retrieved contexts can be shown alongside the generated response.
+
+Research Copilot RAG supports PDF and text ingestion, recursive chunking, sentence-transformer embeddings, FAISS retrieval, Hugging Face generation, evaluation metrics, configuration files, and vector-index persistence.
